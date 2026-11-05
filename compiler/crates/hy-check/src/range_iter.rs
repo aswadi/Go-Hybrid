@@ -446,6 +446,11 @@ impl<'a> Checker<'a> {
                             && !self.type_aliases.contains_key(name.as_str())
                             && match self.shape_of_expr(st, &args[0].value) {
                                 TypeShape::Slice(_) | TypeShape::Map(_, _) | TypeShape::Chan(_) => true,
+                                TypeShape::Str => name == "len" && match unwrap_parens_and_move(&args[0].value) {
+                                    Expr::Ident { name: s, .. } => st.env_lookup(s).is_some_and(|b| !b.immutable),
+                                    Expr::Index { .. } | Expr::Field { .. } | Expr::Call { .. } | Expr::Receive { .. } => true,
+                                    _ => false,
+                                },
                                 TypeShape::Struct(Some(ref n)) => {
                                     name == "len"
                                         && !self.structs.contains_key("set")
@@ -529,7 +534,14 @@ impl<'a> Checker<'a> {
                             None
                         }
                     })
-                    .or_else(|| self.composite_type_expr(st, expr));
+                    .or_else(|| self.composite_type_expr(st, expr))
+                    .or_else(|| match unwrap_parens_and_move(expr) {
+                        Expr::Field { base, name, .. } => self
+                            .composite_type_expr(st, base)
+                            .and_then(|bt| self.struct_fields_for_type(&self.resolve_type_alias(&bt)))
+                            .and_then(|fs| fs.into_iter().find(|(n, _)| n == name).map(|(_, t)| t)),
+                        _ => None,
+                    });
                 if let Some(ty) = chan_ty {
                     let resolved = self.resolve_type_alias(&ty);
                     if matches!(
